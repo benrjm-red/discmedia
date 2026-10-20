@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Media Gallery</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0f0f0f;
+      font-family: system-ui, sans-serif;
+      color: #e0e0e0;
+      min-height: 100vh;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1rem 1.5rem;
+      border-bottom: 1px solid #1e1e1e;
+      background: #111;
+    }
+    header h1 { font-size: 1.1rem; color: #fff; }
+    header a {
+      font-size: 0.85rem;
+      color: #888;
+      text-decoration: none;
+    }
+    header a:hover { color: #e0e0e0; }
+    .count { font-size: 0.8rem; color: #555; margin-left: 0.5rem; }
+
+    main { padding: 1.5rem; }
+
+    .empty {
+      text-align: center;
+      padding: 4rem 1rem;
+      color: #555;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 1rem;
+    }
+
+    .card {
+      background: #1a1a1a;
+      border: 1px solid #242424;
+      border-radius: 10px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .media-wrap {
+      position: relative;
+      background: #111;
+      aspect-ratio: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    .media-wrap img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .media-wrap video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .card-info {
+      padding: 0.6rem 0.75rem;
+      font-size: 0.78rem;
+      color: #888;
+      border-top: 1px solid #242424;
+    }
+    .card-info .sender { color: #c0c0c0; font-weight: 500; }
+    .card-info .time { margin-top: 0.2rem; }
+    .card-info .filename {
+      margin-top: 0.2rem;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #666;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Media Gallery <span class="count" id="count"></span></h1>
+    <a href="/logout">Sign out</a>
+  </header>
+  <main>
+    <div class="empty" id="empty" style="display:none">No media saved yet.</div>
+    <div class="grid" id="grid"></div>
+  </main>
+
+  <script>
+    function formatDate(iso) {
+      const d = new Date(iso);
+      return d.toLocaleString();
+    }
+
+    async function load() {
+      const res = await fetch('/api/items');
+      const items = await res.json();
+
+      document.getElementById('count').textContent = `(${items.length})`;
+
+      if (items.length === 0) {
+        document.getElementById('empty').style.display = 'block';
+        return;
+      }
+
+      const grid = document.getElementById('grid');
+      for (const item of items) {
+        const isVideo = (item.contentType || '').startsWith('video/');
+        const mediaUrl = `/media/${encodeURIComponent(item.filename)}`;
+
+        const card = document.createElement('div');
+        card.className = 'card';
+
+        const wrap = document.createElement('div');
+        wrap.className = 'media-wrap';
+
+        if (isVideo) {
+          const v = document.createElement('video');
+          v.src = mediaUrl;
+          v.controls = true;
+          v.preload = 'metadata';
+          wrap.appendChild(v);
+        } else {
+          const img = document.createElement('img');
+          img.src = mediaUrl;
+          img.alt = item.originalName || item.filename;
+          img.loading = 'lazy';
+          wrap.appendChild(img);
+        }
+
+        const info = document.createElement('div');
+        info.className = 'card-info';
+        info.innerHTML = `
+          <div class="sender">${escHtml(item.sender)}</div>
+          <div class="time">${formatDate(item.timestamp)}</div>
+          <div class="filename">${escHtml(item.originalName || item.filename)}</div>
+        `;
+
+        card.appendChild(wrap);
+        card.appendChild(info);
+        grid.appendChild(card);
+      }
+    }
+
+    function escHtml(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    load();
+  </script>
+</body>
+</html>
