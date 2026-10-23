@@ -61,13 +61,61 @@ function sanitizeFilename(name) {
   return name.replace(/[^a-zA-Z0-9._-]/g, '_');
 }
 
+// NOTIFY_USER_ID may be a user ID (quotes, whitespace or a <@mention> wrapper are tolerated)
+// or the username / display name / nickname of one of your friends, resolved once logged in.
+const RAW_NOTIFY_USER = (process.env.NOTIFY_USER_ID || '').trim().replace(/^["']|["']$/g, '').trim();
+let notifyUserId = null;
+
+async function resolveNotifyUser(client) {
+  if (!RAW_NOTIFY_USER) return null;
+
+  const digits = RAW_NOTIFY_USER.replace(/^<@!?|>$/g, '');
+  if (/^\d{17,20}$/.test(digits)) return digits;
+
+  const wanted = RAW_NOTIFY_USER.replace(/^@/, '').toLowerCase();
+  const { relationships } = client;
+  for (const [id, cachedUser] of relationships.friendCache) {
+    const user = cachedUser || (await client.users.fetch(id).catch(() => null));
+    const names = [user?.username, user?.globalName, user?.tag, relationships.friendNicknames.get(id)];
+    if (names.some((n) => n && n.toLowerCase() === wanted)) return id;
+  }
+
+  console.error(`[bot] NOTIFY_USER_ID ${JSON.stringify(RAW_NOTIFY_USER)} is not a user ID or the name of a friend`);
+  return null;
+}
+
+// Templates support {sender}, {senderId}, {content}, {count}, {files}. Set to an empty string to disable.
+const NOTIFY_MEDIA_MESSAGE = process.env.NOTIFY_MEDIA_MESSAGE ?? 'New media from {sender}: {count} file(s) — {files}';
+const NOTIFY_TEXT_MESSAGE = process.env.NOTIFY_TEXT_MESSAGE ?? 'Message from {sender}: {content}';
+const DISCORD_MAX_LENGTH = 2000;
+
+function renderTemplate(template, vars) {
+  return template
+    .replace(/\\n/g, '\n')
+    .replace(/\{(\w+)\}/g, (match, key) => (key in vars ? String(vars[key]) : match));
+}
+
+async function notify(client, template, vars) {
+  if (!notifyUserId || !template) return;
+  try {
+    const text = renderTemplate(template, vars).slice(0, DISCORD_MAX_LENGTH);
+    const user = await client.users.fetch(notifyUserId);
+    await user.send(text);
+    console.log(`[bot] Notified ${user.tag}`);
+  } catch (err) {
+    console.error('[bot] Failed to send notification:', err.message);
+  }
+}
+
 function startBot() {
   ensureMediaDir();
 
   const client = new Client({ checkUpdate: false });
 
-  client.on('ready', () => {
+  client.on('ready', async () => {
     console.log(`[bot] Logged in as ${client.user.tag}`);
+    notifyUserId = await resolveNotifyUser(client);
+    if (notifyUserId) console.log(`[bot] Notifications will be sent to user ${notifyUserId}`);
   });
 
   client.on('messageCreate', async (message) => {
@@ -75,6 +123,18 @@ function startBot() {
     if (message.channel.type !== 'DM') return;
 
     console.log(`[bot] DM from ${message.author.tag} — ${message.attachments.size} attachment(s)`);
+
+    // Don't notify about our own messages (including the notifications themselves) or the notify target's
+    const shouldNotify = message.author.id !== client.user.id && message.author.id !== notifyUserId;
+    const notifyVars = {
+      sender: message.author.tag,
+      senderId: message.author.id,
+      content: message.content,
+    };
+
+    if (shouldNotify && message.content.trim()) {
+      await notify(client, NOTIFY_TEXT_MESSAGE, notifyVars);
+    }
 
     if (message.attachments.size === 0) return;
 
@@ -90,6 +150,7 @@ function startBot() {
     }
 
     const index = loadIndex();
+    const savedNames = [];
 
     for (const attachment of mediaAttachments) {
       const timestamp = Date.now();
@@ -109,10 +170,19 @@ function startBot() {
         };
         index.unshift(entry); // newest first
         saveIndex(index);
+        savedNames.push(attachment.name);
         console.log(`[bot] Saved: ${filename} from ${message.author.tag}`);
       } catch (err) {
         console.error(`[bot] Failed to download ${attachment.name}:`, err.message);
       }
+    }
+
+    if (shouldNotify && savedNames.length > 0) {
+      await notify(client, NOTIFY_MEDIA_MESSAGE, {
+        ...notifyVars,
+        count: savedNames.length,
+        files: savedNames.join(', '),
+      });
     }
   });
 
