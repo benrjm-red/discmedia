@@ -123,6 +123,9 @@ function startBot() {
     if (message.channel.type !== 'DM') return;
 
     console.log(`[bot] DM from ${message.author.tag} — ${message.attachments.size} attachment(s)`);
+    if (message.content.trim()) {
+      console.log(`[bot]   text: ${message.content}`);
+    }
 
     // Don't notify about our own messages (including the notifications themselves) or the notify target's
     const shouldNotify = message.author.id !== client.user.id && message.author.id !== notifyUserId;
